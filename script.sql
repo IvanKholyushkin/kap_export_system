@@ -88,3 +88,48 @@ BEGIN
     WHERE c.action_type = 'UPDATE' AND c.processed = FALSE AND c.table_name = 'my_info';
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION bqc_kap_get_changes(table_name TEXT)
+RETURNS SETOF RECORD
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    dynamic_query TEXT;
+BEGIN
+    -- Формируем динамический SQL-запрос, который выбирает все столбцы из переданной таблицы
+    dynamic_query := format(
+        'SELECT t.* 
+         FROM %I t 
+         INNER JOIN global_change_log c ON t.id = c.record_id 
+         WHERE c.action_type IN (''INSERT'', ''UPDATE'') 
+         AND c.processed = FALSE 
+         AND c.table_name = %L',
+        table_name, table_name
+    );
+
+    -- Помечаем записи в global_change_log как обработанные (processed = TRUE)
+    EXECUTE format(
+        'UPDATE global_change_log 
+         SET processed = TRUE 
+         WHERE table_name = %L 
+         AND action_type IN (''INSERT'', ''UPDATE'') 
+         AND processed = FALSE',
+        table_name
+    );
+
+    -- Выполняем динамический запрос и возвращаем результат
+    RETURN QUERY EXECUTE dynamic_query;
+END;
+$$;
+
+
+CREATE OR REPLACE FUNCTION bqc_kap_clean_old_logs()
+RETURNS VOID 
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    DELETE FROM global_change_log 
+    WHERE processed = TRUE 
+      AND changed_at < NOW() - INTERVAL '60 days';
+END;
+$$;

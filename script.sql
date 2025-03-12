@@ -89,49 +89,36 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION bqc_kap_get_changes(table_name TEXT)
-RETURNS SETOF RECORD
+-- 4. создаем функцию под каждую таблицу, которая смотрит в таблицу изменений
+CREATE OR REPLACE FUNCTION bqc_kap_my_info()
+RETURNS TABLE (
+    id INT,
+    first_name VARCHAR(25),
+    last_name VARCHAR(25),
+    city VARCHAR(25),
+    regist_date DATE
+) 
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    primary_key_column TEXT;
-    dynamic_query TEXT;
 BEGIN
-    -- Определяем, есть ли поле 'id' в таблице
-    SELECT attname INTO primary_key_column
-    FROM pg_attribute 
-    WHERE attrelid = table_name::regclass 
-      AND attname IN ('id', 'idr') 
-      AND attnum > 0 
-      AND NOT attisdropped
-    LIMIT 1;
+    -- Возвращаем инкрементальные записи
+    RETURN QUERY
+    SELECT t.id, t.first_name, t.last_name, t.city, t.regist_date
+    FROM my_info t
+    INNER JOIN global_change_log c ON t.id = c.record_id
+    WHERE c.action_type IN ('INSERT', 'UPDATE') 
+      AND c.processed = FALSE 
+      AND c.table_name = 'my_info';
 
-    -- Строим динамический SQL с нужным полем
-    dynamic_query := format(
-        'SELECT t.* 
-         FROM %I t 
-         INNER JOIN global_change_log c 
-         ON t.%I = c.record_id
-         WHERE c.action_type IN (''INSERT'', ''UPDATE'') 
-         AND c.processed = FALSE 
-         AND c.table_name = %L',
-        table_name, primary_key_column, table_name
-    );
-
-    -- Помечаем записи как обработанные
-    EXECUTE format(
-        'UPDATE global_change_log 
-         SET processed = TRUE 
-         WHERE table_name = %L 
-         AND action_type IN (''INSERT'', ''UPDATE'') 
-         AND processed = FALSE',
-        table_name
-    );
-
-    -- Выполняем динамический SQL
-    RETURN QUERY EXECUTE dynamic_query;
+    -- Помечаем эти записи как обработанные
+    UPDATE global_change_log 
+    SET processed = TRUE
+    WHERE table_name = 'my_info'
+      AND action_type IN ('INSERT', 'UPDATE') 
+      AND processed = FALSE;
 END;
 $$;
+
 
 
 CREATE OR REPLACE FUNCTION bqc_kap_clean_old_logs()

@@ -94,20 +94,31 @@ RETURNS SETOF RECORD
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    primary_key_column TEXT;
     dynamic_query TEXT;
 BEGIN
-    -- Формируем динамический SQL-запрос, который выбирает все столбцы из переданной таблицы
+    -- Определяем, есть ли поле 'id' в таблице
+    SELECT attname INTO primary_key_column
+    FROM pg_attribute 
+    WHERE attrelid = table_name::regclass 
+      AND attname IN ('id', 'idr') 
+      AND attnum > 0 
+      AND NOT attisdropped
+    LIMIT 1;
+
+    -- Строим динамический SQL с нужным полем
     dynamic_query := format(
         'SELECT t.* 
          FROM %I t 
-         INNER JOIN global_change_log c ON t.id = c.record_id 
+         INNER JOIN global_change_log c 
+         ON t.%I = c.record_id
          WHERE c.action_type IN (''INSERT'', ''UPDATE'') 
          AND c.processed = FALSE 
          AND c.table_name = %L',
-        table_name, table_name
+        table_name, primary_key_column, table_name
     );
 
-    -- Помечаем записи в global_change_log как обработанные (processed = TRUE)
+    -- Помечаем записи как обработанные
     EXECUTE format(
         'UPDATE global_change_log 
          SET processed = TRUE 
@@ -117,7 +128,7 @@ BEGIN
         table_name
     );
 
-    -- Выполняем динамический запрос и возвращаем результат
+    -- Выполняем динамический SQL
     RETURN QUERY EXECUTE dynamic_query;
 END;
 $$;
